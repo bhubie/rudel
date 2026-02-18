@@ -9,6 +9,7 @@
 		"format": "biome format --write .",
 		"check-types": "turbo run check-types",
 		"test": "turbo run test",
+		"test:env": "doppler run --project rudel --config ci -- bun run test",
 		"verify": "turbo run lint check-types test build",
 		"deploy": "turbo run build --filter=@rudel/web && wrangler deploy"
 	},
