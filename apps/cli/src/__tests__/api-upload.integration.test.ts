@@ -43,14 +43,25 @@ describe("CLI upload to local API", () => {
 			subagents: [{ agentId: "sub-1", content: "subagent content" }],
 		};
 
-		const result = await uploadSession(request, {
-			endpoint: worker.rpcUrl,
-			token: bearerToken,
-		});
+		// Retry up to 3 times — wrangler dev + ClickHouse can be slow to accept
+		// the first request after startup (race condition with D1/CH readiness).
+		let result = { success: false, error: "not attempted" } as Awaited<
+			ReturnType<typeof uploadSession>
+		>;
+		for (let attempt = 0; attempt < 3; attempt++) {
+			result = await uploadSession(request, {
+				endpoint: worker.rpcUrl,
+				token: bearerToken,
+			});
+			if (result.success) break;
+			await Bun.sleep(1000);
+		}
 
-		expect(result.success).toBe(true);
+		if (!result.success) {
+			throw new Error(`uploadSession failed after 3 attempts: ${result.error}`);
+		}
 		expect(result.status).toBe(200);
-	});
+	}, 30_000);
 
 	test("full CLI upload via subprocess to local API", async () => {
 		expect(bearerToken).toBeTruthy();
