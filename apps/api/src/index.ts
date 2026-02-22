@@ -1,21 +1,8 @@
 import { join } from "node:path";
 import { RPCHandler } from "@orpc/server/fetch";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createAuth } from "./auth.js";
 import { db } from "./db.js";
 import { router } from "./router.js";
-
-const migrationsFolder = join(
-	import.meta.dir,
-	"..",
-	"..",
-	"..",
-	"packages",
-	"sql-schema",
-	"db",
-	"migrations",
-);
-await migrate(db, { migrationsFolder });
 
 const socialProviders: Record<
 	string,
@@ -109,6 +96,11 @@ const server = Bun.serve({
 		});
 
 		if (matched) {
+			// Log 500 errors for debugging
+			if (response.status >= 500) {
+				const body = await response.clone().text();
+				console.error(`[RPC ${url.pathname}] ${response.status}:`, body);
+			}
 			for (const [key, value] of Object.entries(cors)) {
 				response.headers.set(key, value);
 			}
