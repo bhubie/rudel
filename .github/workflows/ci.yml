@@ -16,6 +16,9 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup
 
+      - name: Check for local overrides
+        run: bun scripts/check-overrides.ts
+
       - name: Verify lockfile unchanged
         run: git diff --exit-code bun.lock
 
