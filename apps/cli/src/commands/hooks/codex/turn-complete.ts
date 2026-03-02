@@ -1,0 +1,71 @@
+import {
+	codexAdapter,
+	findActiveRolloutFile,
+	type SessionFile,
+} from "@rudel/agent-adapters";
+import { buildCommand } from "@stricli/core";
+import { loadCredentials } from "../../../lib/credentials.js";
+import { getGitInfo } from "../../../lib/git-info.js";
+import { getProjectOrgId } from "../../../lib/project-config.js";
+import { uploadSession } from "../../../lib/uploader.js";
+
+interface CodexNotifyInput {
+	type: string;
+	thread_id: string;
+	turn_id?: string;
+	cwd: string;
+	transcript_path?: string;
+}
+
+async function readStdin(): Promise<string> {
+	const chunks: string[] = [];
+	for await (const chunk of process.stdin) {
+		chunks.push(typeof chunk === "string" ? chunk : chunk.toString());
+	}
+	return chunks.join("");
+}
+
+async function runTurnComplete(): Promise<void> {
+	try {
+		const raw = await readStdin();
+		if (!raw.trim()) return;
+
+		const input = JSON.parse(raw) as CodexNotifyInput;
+		if (!input.thread_id || !input.cwd) return;
+
+		const credentials = loadCredentials();
+		if (!credentials) return;
+
+		const transcriptPath =
+			input.transcript_path ?? (await findActiveRolloutFile(input.thread_id));
+		if (!transcriptPath) return;
+
+		const sessionFile: SessionFile = {
+			sessionId: input.thread_id,
+			transcriptPath,
+			projectPath: input.cwd,
+		};
+
+		const gitInfo = await getGitInfo(input.cwd);
+		const organizationId = await getProjectOrgId(input.cwd);
+
+		const request = await codexAdapter.buildUploadRequest(sessionFile, {
+			gitInfo,
+			organizationId,
+		});
+
+		const apiBase = process.env.RUDEL_API_BASE ?? credentials.apiBaseUrl;
+		const endpoint = `${apiBase}/rpc`;
+		await uploadSession(request, { endpoint, token: credentials.token });
+	} catch {
+		// Swallow all errors — this runs async in the background
+	}
+}
+
+export const turnCompleteCommand = buildCommand({
+	loader: async () => ({ default: runTurnComplete }),
+	parameters: {},
+	docs: {
+		brief: "Handle Codex agent-turn-complete hook",
+	},
+});

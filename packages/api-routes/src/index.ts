@@ -87,6 +87,7 @@ export const SubagentFileSchema = z.object({
 });
 
 export const IngestSessionInputSchema = z.object({
+	source: z.string().default("claude_code"),
 	sessionId: z.string(),
 	projectPath: z.string(),
 	repository: z.string().optional(),

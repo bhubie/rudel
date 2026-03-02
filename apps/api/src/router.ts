@@ -1,10 +1,10 @@
 import { ORPCError } from "@orpc/server";
+import { getAdapter } from "@rudel/agent-adapters";
 import { member, organization, session } from "@rudel/sql-schema";
 import { and, eq } from "drizzle-orm";
 import { getClickhouse } from "./clickhouse.js";
 import { db } from "./db.js";
 import { analyticsRouter } from "./handlers/analytics/index.js";
-import { ingestSession } from "./ingest.js";
 import { authMiddleware, os } from "./middleware.js";
 import {
 	deleteOrgSessions,
@@ -83,7 +83,8 @@ const ingestSessionHandler = os.ingestSession
 			}
 		}
 
-		await ingestSession(getClickhouse(), input, {
+		const adapter = getAdapter(input.source);
+		await adapter.ingest(getClickhouse(), input, {
 			userId: context.user.id,
 			organizationId: orgId,
 		});

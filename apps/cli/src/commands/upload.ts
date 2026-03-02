@@ -1,26 +1,24 @@
 import * as p from "@clack/prompts";
+import {
+	claudeCodeAdapter,
+	getAdapter,
+	getAvailableAdapters,
+	groupProjectsForCwd,
+	type ScannedProject,
+	type SessionFile,
+} from "@rudel/agent-adapters";
 import { buildCommand } from "@stricli/core";
-import { type BatchOptions, batchUpload } from "../lib/batch-uploader.js";
 import { classifySession } from "../lib/classifier.js";
 import { loadCredentials } from "../lib/credentials.js";
 import { getGitInfo } from "../lib/git-info.js";
 import { getProjectOrgId } from "../lib/project-config.js";
-import {
-	groupProjectsByRemote,
-	type ProjectGroup,
-	scanProjects,
-} from "../lib/project-scanner.js";
 import { resolveSession } from "../lib/session-resolver.js";
-import { readSubagentFiles } from "../lib/subagent-reader.js";
-import { extractAgentIds, readTranscript } from "../lib/transcript-reader.js";
 import {
 	DEFAULT_ENDPOINT,
-	type IngestRequest,
 	SESSION_TAGS,
 	type SessionTag,
-	type SubagentFile,
 } from "../lib/types.js";
-import { uploadSession } from "../lib/uploader.js";
+import { type UploadConfig, uploadSession } from "../lib/uploader.js";
 
 interface UploadFlags {
 	tag?: SessionTag;
@@ -42,40 +40,57 @@ async function runInteractiveUpload(flags: UploadFlags): Promise<void> {
 
 	const spin = p.spinner();
 	spin.start("Scanning projects...");
-	const projects = await scanProjects();
-	spin.stop(`Found ${projects.length} project(s)`);
 
-	if (projects.length === 0) {
-		p.log.warn("No projects with sessions found in ~/.claude/projects/");
+	const adapters = getAvailableAdapters();
+	const allProjects: ScannedProject[] = [];
+	for (const adapter of adapters) {
+		const projects = await adapter.scanAllSessions();
+		allProjects.push(...projects);
+	}
+
+	spin.stop(`Found ${allProjects.length} project(s)`);
+
+	if (allProjects.length === 0) {
+		p.log.warn("No projects with sessions found.");
 		p.outro("Nothing to upload.");
 		return;
 	}
 
 	const cwd = process.cwd();
-	spin.start("Grouping by git remote...");
-	const groups = await groupProjectsByRemote(projects, cwd);
-	spin.stop(`Found ${groups.length} group(s)`);
+	const grouped = groupProjectsForCwd(allProjects, cwd);
 
 	const options: Array<{
-		value: ProjectGroup;
+		value: ScannedProject;
 		label: string;
 		hint: string;
 	}> = [];
-	const preSelected: ProjectGroup[] = [];
+	const preSelected: ScannedProject[] = [];
 
-	for (const group of groups) {
-		const label =
-			group.projects.length > 1
-				? group.displayName
-				: (group.projects[0]?.displayPath ?? group.displayName);
-		const hint =
-			group.projects.length > 1
-				? `${sessionCountHint(group.totalSessions)}, ${group.projects.length} locations`
-				: sessionCountHint(group.totalSessions);
-		options.push({ value: group, label, hint });
-		if (group.containsCwd) {
-			preSelected.push(group);
-		}
+	for (const proj of grouped.current) {
+		options.push({
+			value: proj,
+			label: `[${getAdapterName(proj.source)}] ${proj.displayPath}`,
+			hint: sessionCountHint(proj.sessionCount),
+		});
+		preSelected.push(proj);
+	}
+
+	for (const sub of grouped.subfolders) {
+		const relative = sub.projectPath.slice(cwd.length + 1);
+		options.push({
+			value: sub,
+			label: `  [${getAdapterName(sub.source)}] ${relative}`,
+			hint: sessionCountHint(sub.sessionCount),
+		});
+		preSelected.push(sub);
+	}
+
+	for (const other of grouped.others) {
+		options.push({
+			value: other,
+			label: `[${getAdapterName(other.source)}] ${other.displayPath}`,
+			hint: sessionCountHint(other.sessionCount),
+		});
 	}
 
 	const selected = await p.multiselect({
@@ -90,46 +105,91 @@ async function runInteractiveUpload(flags: UploadFlags): Promise<void> {
 		return;
 	}
 
-	const selectedProjects = selected.flatMap((g) => g.projects);
-	const totalSessions = selected.reduce((sum, g) => sum + g.totalSessions, 0);
+	const totalSessions = selected.reduce(
+		(sum, proj) => sum + proj.sessionCount,
+		0,
+	);
 	p.log.info(
-		`Uploading ${totalSessions} session(s) from ${selectedProjects.length} project(s)`,
+		`Uploading ${totalSessions} session(s) from ${selected.length} project(s)`,
 	);
 
-	const batchOpts: BatchOptions = {
-		tag: flags.tag,
-		classify: flags.classify,
-		dryRun: flags.dryRun,
-		org: flags.org,
-		uploadConfig: {
-			endpoint: flags.endpoint,
-			token: credentials?.token ?? "",
-		},
+	const uploadConfig: UploadConfig = {
+		endpoint: flags.endpoint,
+		token: credentials?.token ?? "",
 	};
 
 	const uploadSpin = p.spinner();
 	uploadSpin.start("Uploading sessions...");
 
-	const result = await batchUpload(
-		selectedProjects,
-		batchOpts,
-		(current, total) => {
-			uploadSpin.message(`[${current}/${total}] Uploading...`);
-		},
-	);
+	let succeeded = 0;
+	let failed = 0;
+	let completed = 0;
+	const errors: Array<{ sessionId: string; project: string; error: string }> =
+		[];
+
+	for (const project of selected) {
+		const adapter = getAdapter(project.source);
+		const gitInfo = await getGitInfo(project.projectPath);
+		const organizationId =
+			flags.org ?? (await getProjectOrgId(project.projectPath));
+
+		for (const session of project.sessions) {
+			completed++;
+			uploadSpin.message(`[${completed}/${totalSessions}] Uploading...`);
+
+			try {
+				const request = await adapter.buildUploadRequest(session, {
+					tag: flags.tag,
+					gitInfo,
+					organizationId,
+				});
+
+				if (!flags.tag && flags.classify) {
+					const classified = await classifySession(request.content);
+					if (classified) {
+						(request as { tag?: string }).tag = classified;
+					}
+				}
+
+				if (flags.dryRun) {
+					succeeded++;
+					continue;
+				}
+
+				const result = await uploadSession(request, uploadConfig);
+				if (result.success) {
+					succeeded++;
+				} else {
+					failed++;
+					errors.push({
+						sessionId: session.sessionId,
+						project: project.displayPath,
+						error: result.error ?? "Unknown error",
+					});
+				}
+			} catch (error) {
+				failed++;
+				errors.push({
+					sessionId: session.sessionId,
+					project: project.displayPath,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
+	}
 
 	uploadSpin.stop("Upload complete");
 
-	if (result.succeeded > 0) {
-		p.log.success(`${result.succeeded} session(s) uploaded successfully`);
+	if (succeeded > 0) {
+		p.log.success(`${succeeded} session(s) uploaded successfully`);
 	}
-	if (result.failed > 0) {
-		p.log.error(`${result.failed} session(s) failed`);
-		for (const err of result.errors.slice(0, 5)) {
+	if (failed > 0) {
+		p.log.error(`${failed} session(s) failed`);
+		for (const err of errors.slice(0, 5)) {
 			p.log.warn(`  ${err.project}/${err.sessionId}: ${err.error}`);
 		}
-		if (result.errors.length > 5) {
-			p.log.warn(`  ...and ${result.errors.length - 5} more`);
+		if (errors.length > 5) {
+			p.log.warn(`  ...and ${errors.length - 5} more`);
 		}
 	}
 
@@ -139,8 +199,16 @@ async function runInteractiveUpload(flags: UploadFlags): Promise<void> {
 		p.outro("Done!");
 	}
 
-	if (result.failed > 0) {
+	if (failed > 0) {
 		process.exitCode = 1;
+	}
+}
+
+function getAdapterName(source: string): string {
+	try {
+		return getAdapter(source).name;
+	} catch {
+		return source;
 	}
 }
 
@@ -179,61 +247,40 @@ async function runSingleUpload(
 	}
 	write(`Found session at: ${sessionInfo.transcriptPath}`);
 
-	write("Reading transcript...");
-	let content: string;
-	try {
-		content = await readTranscript(sessionInfo.transcriptPath);
-	} catch (error) {
-		writeError(
-			`Error reading transcript: ${error instanceof Error ? error.message : String(error)}`,
-		);
-		process.exitCode = 1;
-		return;
-	}
-	write(`Transcript: ${content.length} bytes`);
-
-	const agentIds = extractAgentIds(content);
-	let subagents: SubagentFile[] = [];
-	if (agentIds.length > 0) {
-		write(`Found ${agentIds.length} subagent(s): ${agentIds.join(", ")}`);
-		subagents = await readSubagentFiles(
-			sessionInfo.sessionDir,
-			agentIds,
-			sessionInfo.sessionId,
-		);
-		write(
-			`Read ${subagents.length} subagent file(s): ${subagents.reduce((sum, s) => sum + s.content.length, 0)} bytes total`,
-		);
-	}
-
 	const gitInfo = await getGitInfo(sessionInfo.projectPath);
 	if (gitInfo.repository) write(`Repository: ${gitInfo.repository}`);
 	if (gitInfo.branch) write(`Branch: ${gitInfo.branch}`);
-
-	let tag = flags.tag;
-	if (!tag && flags.classify) {
-		write("Classifying session...");
-		tag = (await classifySession(content)) ?? undefined;
-		if (tag) write(`Classified as: ${tag}`);
-	}
 
 	const organizationId =
 		flags.org ?? (await getProjectOrgId(sessionInfo.projectPath));
 	if (organizationId) write(`Organization: ${organizationId}`);
 
-	const request: IngestRequest = {
+	write("Building upload request...");
+	const sessionFile: SessionFile = {
 		sessionId: sessionInfo.sessionId,
+		transcriptPath: sessionInfo.transcriptPath,
 		projectPath: sessionInfo.projectPath,
-		repository: gitInfo.repository,
-		gitRemote: gitInfo.gitRemote,
-		packageName: gitInfo.packageName,
-		gitBranch: gitInfo.branch,
-		gitSha: gitInfo.sha,
-		tag,
-		content,
-		subagents: subagents.length > 0 ? subagents : undefined,
-		organizationId,
 	};
+
+	const request = await claudeCodeAdapter.buildUploadRequest(sessionFile, {
+		tag: flags.tag,
+		gitInfo,
+		organizationId,
+	});
+
+	write(`Transcript: ${request.content.length} bytes`);
+	if (request.subagents && request.subagents.length > 0) {
+		write(`Subagents: ${request.subagents.length} file(s)`);
+	}
+
+	if (!flags.tag && flags.classify) {
+		write("Classifying session...");
+		const classified = await classifySession(request.content);
+		if (classified) {
+			(request as { tag?: string }).tag = classified;
+			write(`Classified as: ${classified}`);
+		}
+	}
 
 	if (flags.dryRun) {
 		const preview = {
@@ -324,6 +371,6 @@ export const uploadCommand = buildCommand({
 	},
 	docs: {
 		brief:
-			"Upload Claude Code session transcripts. No args = interactive project picker.",
+			"Upload session transcripts (Claude Code & Codex). No args = interactive project picker.",
 	},
 });

@@ -13,12 +13,12 @@ export interface RudelClaudeSessionsRow {
   git_remote: string
   package_name: string
   content: string
-  subagents: Record<string, string>
   ingested_at: string
   user_id: string
   git_branch: string | null
   git_sha: string | null
   tag: string | null
+  subagents: Record<string, string>
 }
 
 export const RudelClaudeSessionsRowSchema = z.object({
@@ -31,7 +31,40 @@ export const RudelClaudeSessionsRowSchema = z.object({
   git_remote: z.string(),
   package_name: z.string(),
   content: z.string(),
+  ingested_at: z.string(),
+  user_id: z.string(),
+  git_branch: z.string().nullable(),
+  git_sha: z.string().nullable(),
+  tag: z.string().nullable(),
   subagents: z.record(z.string(), z.string()),
+})
+
+export type RudelClaudeSessionsRowInput = z.input<typeof RudelClaudeSessionsRowSchema>
+export type RudelClaudeSessionsRowOutput = z.output<typeof RudelClaudeSessionsRowSchema>
+
+export interface RudelCodexSessionsRow {
+  session_date: string
+  last_interaction_date: string
+  session_id: string
+  organization_id: string
+  project_path: string
+  repository: string | null
+  content: string
+  ingested_at: string
+  user_id: string
+  git_branch: string | null
+  git_sha: string | null
+  tag: string | null
+}
+
+export const RudelCodexSessionsRowSchema = z.object({
+  session_date: z.string(),
+  last_interaction_date: z.string(),
+  session_id: z.string(),
+  organization_id: z.string(),
+  project_path: z.string(),
+  repository: z.string().nullable(),
+  content: z.string(),
   ingested_at: z.string(),
   user_id: z.string(),
   git_branch: z.string().nullable(),
@@ -39,8 +72,8 @@ export const RudelClaudeSessionsRowSchema = z.object({
   tag: z.string().nullable(),
 })
 
-export type RudelClaudeSessionsRowInput = z.input<typeof RudelClaudeSessionsRowSchema>
-export type RudelClaudeSessionsRowOutput = z.output<typeof RudelClaudeSessionsRowSchema>
+export type RudelCodexSessionsRowInput = z.input<typeof RudelCodexSessionsRowSchema>
+export type RudelCodexSessionsRowOutput = z.output<typeof RudelCodexSessionsRowSchema>
 
 export interface RudelSessionAnalyticsRow {
   session_date: string
@@ -66,6 +99,7 @@ export interface RudelSessionAnalyticsRow {
   cache_creation_input_tokens: string
   total_tokens: string
   tag: string | null
+  source: string
   total_interactions: number
   actual_duration_min: number
   avg_period_sec: number
@@ -107,6 +141,7 @@ export const RudelSessionAnalyticsRowSchema = z.object({
   cache_creation_input_tokens: z.string(),
   total_tokens: z.string(),
   tag: z.string().nullable(),
+  source: z.string(),
   total_interactions: z.number(),
   actual_duration_min: z.number(),
   avg_period_sec: z.number(),

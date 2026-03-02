@@ -1,17 +1,24 @@
 import * as p from "@clack/prompts";
+import { getAllAdapters } from "@rudel/agent-adapters";
 import { buildCommand } from "@stricli/core";
-import { getDefaultAgent } from "../lib/agents/index.js";
 
 async function runDisable(): Promise<void> {
-	const agent = getDefaultAgent();
+	const adapters = getAllAdapters();
+	let anyDisabled = false;
 
-	if (!agent.isHookInstalled()) {
-		p.log.info("Auto-upload hook is not enabled.");
-		return;
+	for (const adapter of adapters) {
+		if (adapter.isHookInstalled()) {
+			adapter.removeHook();
+			p.log.success(
+				`${adapter.name}: Auto-upload hook removed from ${adapter.getHookConfigPath()}`,
+			);
+			anyDisabled = true;
+		}
 	}
 
-	agent.removeHook();
-	p.log.success(`Auto-upload hook removed from ${agent.getHookSettingsPath()}`);
+	if (!anyDisabled) {
+		p.log.info("No auto-upload hooks are enabled.");
+	}
 }
 
 export const disableCommand = buildCommand({
