@@ -20,6 +20,7 @@ export function createClickHouseExecutor(config: {
 		username: config.username,
 		password: config.password,
 		database: config.database,
+		request_timeout: 120_000,
 		clickhouse_settings: {
 			wait_end_of_query: 1,
 		},
