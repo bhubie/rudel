@@ -14,7 +14,7 @@ export async function ingestRudelClaudeSessions(
   options?: { validate?: boolean }
 ): Promise<void> {
   const data = options?.validate ? rows.map(row => RudelClaudeSessionsRowSchema.parse(row)) : rows
-  await ingestor.insert({ table: 'rudel.claude_sessions', values: data as unknown as Record<string, unknown>[] })
+  await ingestor.insert({ table: 'rudel.claude_sessions', values: data })
 }
 
 export async function ingestRudelCodexSessions(
@@ -23,7 +23,7 @@ export async function ingestRudelCodexSessions(
   options?: { validate?: boolean }
 ): Promise<void> {
   const data = options?.validate ? rows.map(row => RudelCodexSessionsRowSchema.parse(row)) : rows
-  await ingestor.insert({ table: 'rudel.codex_sessions', values: data as unknown as Record<string, unknown>[] })
+  await ingestor.insert({ table: 'rudel.codex_sessions', values: data })
 }
 
 export async function ingestRudelSessionAnalytics(
@@ -32,5 +32,5 @@ export async function ingestRudelSessionAnalytics(
   options?: { validate?: boolean }
 ): Promise<void> {
   const data = options?.validate ? rows.map(row => RudelSessionAnalyticsRowSchema.parse(row)) : rows
-  await ingestor.insert({ table: 'rudel.session_analytics', values: data as unknown as Record<string, unknown>[] })
+  await ingestor.insert({ table: 'rudel.session_analytics', values: data })
 }
