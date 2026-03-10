@@ -342,8 +342,8 @@ export async function getProjectDetails(
       SUM(ifNull(output_tokens, 0)) as output_tokens_sum,
       COUNT(DISTINCT user_id) as contributors_count,
       countIf(success_score < 40) as errors_count,
-      round(AVG(actual_duration_min), 2) as avg_session_duration_min,
-      round(AVG(success_score), 2) as success_rate,
+      ifNull(round(avgOrNull(actual_duration_min), 2), 0) as avg_session_duration_min,
+      ifNull(round(avgOrNull(success_score), 2), 0) as success_rate,
       round(SUM(actual_duration_min), 2) as total_duration_min
     FROM rudel.session_analytics
     WHERE ${PROJECT_DISPLAY_EXPR} = ${projectDisplaySubquery}
@@ -360,7 +360,7 @@ export async function getProjectDetails(
 	>(query);
 
 	const [row] = results;
-	if (!row) return null;
+	if (!row || row.total_sessions === 0) return null;
 	const cost =
 		row.output_tokens_sum * 0.000015 + row.input_tokens_sum * 0.000003;
 	return {
