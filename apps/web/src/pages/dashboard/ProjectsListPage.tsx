@@ -147,7 +147,8 @@ export function ProjectsListPage() {
 			: "0";
 
 	const handleRowClick = (row: ProjectInvestment) => {
-		const encodedPath = encodeProjectPath(row.project_path);
+		const key = row.git_remote || row.project_path;
+		const encodedPath = encodeProjectPath(key);
 		navigate(`/dashboard/projects/${encodedPath}`);
 	};
 
