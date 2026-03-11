@@ -95,8 +95,8 @@ export function ProjectTrendChart({ data }: ProjectTrendChartProps) {
 		const projectTotals = new Map<string, number>();
 		for (const d of data) {
 			projectTotals.set(
-				d.project_path,
-				(projectTotals.get(d.project_path) ?? 0) + d.sessions,
+				d.project_name,
+				(projectTotals.get(d.project_name) ?? 0) + d.sessions,
 			);
 		}
 		const sorted = Array.from(projectTotals.entries()).sort(
@@ -150,7 +150,7 @@ export function ProjectTrendChart({ data }: ProjectTrendChartProps) {
 
 			for (const projectPath of topProjects) {
 				const dp = data.find(
-					(d) => d.date === date && d.project_path === projectPath,
+					(d) => d.date === date && d.project_name === projectPath,
 				);
 				dateObj[projectPath] = dp
 					? (dp[currentMetric.key as keyof ProjectTrendDataPoint] as number)
@@ -159,7 +159,7 @@ export function ProjectTrendChart({ data }: ProjectTrendChartProps) {
 
 			if (showOther) {
 				dateObj.Other = data
-					.filter((d) => d.date === date && !topProjectsSet.has(d.project_path))
+					.filter((d) => d.date === date && !topProjectsSet.has(d.project_name))
 					.reduce(
 						(sum, d) =>
 							sum +
@@ -199,11 +199,7 @@ export function ProjectTrendChart({ data }: ProjectTrendChartProps) {
 			}));
 	}, [chartData, seriesList, colorMap]);
 
-	const formatProjectName = (projectPath: string) => {
-		if (projectPath === "Other") return "Other";
-		const parts = projectPath.split("/");
-		return parts[parts.length - 1] || projectPath.substring(0, 20);
-	};
+	const formatProjectName = (name: string) => name;
 
 	return (
 		<div className="space-y-4">

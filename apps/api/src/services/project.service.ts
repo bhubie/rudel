@@ -76,9 +76,7 @@ export interface ProjectError extends ProjectErrorBase {
 	first_seen: string;
 }
 
-export interface ProjectTrendDataPoint extends ProjectTrendDataPointBase {
-	project_name?: string;
-}
+export type ProjectTrendDataPoint = ProjectTrendDataPointBase;
 
 /**
  * Extract project name from path (last segment)
