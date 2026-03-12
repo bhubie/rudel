@@ -1,5 +1,7 @@
 # Rudel
 
+**Try the hosted version for free at [rudel.ai](https://rudel.ai)**
+
 Analytics for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Rudel gives you a dashboard with insights on your coding sessions — token usage, session duration, activity patterns, model usage, and more.
 
 ## Prerequisites
