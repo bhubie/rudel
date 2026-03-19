@@ -1,64 +1,43 @@
-import posthog from "posthog-js";
+import {
+	type ProductAnalyticsPageName as AppPageName,
+	type AuthenticationActionTriggeredEvent,
+	type ChartExportTriggeredEvent,
+	type DashboardDrilldownOpenedEvent,
+	type DashboardFilterChangedEvent,
+	type DashboardLoadFailedEvent,
+	type DashboardNavigationClickedEvent,
+	type ProductAnalyticsDashboardPageName as DashboardPageName,
+	type DashboardViewedEvent,
+	type OrganizationActionTriggeredEvent,
+	PRODUCT_ANALYTICS_APP_PAGE_NAMES,
+	PRODUCT_ANALYTICS_DASHBOARD_PAGE_NAMES,
+	PRODUCT_ANALYTICS_EVENT_VERSION,
+	PRODUCT_ANALYTICS_EVENTS,
+	type ProductAnalyticsEnvironment,
+	type ProductAnalyticsEventName,
+	type SignUpFailedEvent,
+	type UiUtilityUsedEvent,
+} from "@rudel/api-routes";
 
-let initialized = false;
-const EVENT_VERSION = 1;
+const EVENT_VERSION = PRODUCT_ANALYTICS_EVENT_VERSION;
 const ANALYTICS_SURFACE = "web";
 
-type AnalyticsEnvironment = "production" | "staging" | "development" | "local";
-type AnalyticsPropertyValue = string | number | boolean | null | undefined;
+type WebCapturePayload<TEvent> = Omit<
+	TEvent,
+	"environment" | "event_version" | "surface"
+>;
+type PostHogClient = typeof import("posthog-js")["default"];
 
-export const DASHBOARD_PAGE_NAMES = [
-	"overview",
-	"developers",
-	"developer_detail",
-	"projects",
-	"project_detail",
-	"sessions",
-	"session_detail",
-	"errors",
-	"learnings",
-	"roi",
-	"organization",
-	"organization_create",
-	"invitations",
-	"profile",
-] as const;
+export { PRODUCT_ANALYTICS_APP_PAGE_NAMES as APP_PAGE_NAMES };
+export { PRODUCT_ANALYTICS_DASHBOARD_PAGE_NAMES as DASHBOARD_PAGE_NAMES };
+export type { AppPageName, DashboardPageName };
 
-export type DashboardPageName = (typeof DASHBOARD_PAGE_NAMES)[number];
-
-export const APP_PAGE_NAMES = [
-	...DASHBOARD_PAGE_NAMES,
-	"login",
-	"signup",
-	"accept_invitation",
-	"device_login",
-] as const;
-
-export type AppPageName = (typeof APP_PAGE_NAMES)[number];
-
-const DASHBOARD_PAGE_NAME_SET = new Set<string>(DASHBOARD_PAGE_NAMES);
-
-export type UiControlType =
-	| "button"
-	| "link"
-	| "input"
-	| "select"
-	| "toggle"
-	| "menu"
-	| "table"
-	| "dialog";
-
-export type UiInteractionType =
-	| "click"
-	| "submit"
-	| "change"
-	| "open"
-	| "close"
-	| "copy"
-	| "download"
-	| "share"
-	| "navigate"
-	| "reset";
+let posthogClient: PostHogClient | null = null;
+let posthogClientPromise: Promise<PostHogClient | null> | null = null;
+const pendingActions: Array<(client: PostHogClient) => void> = [];
+const DASHBOARD_PAGE_NAME_SET = new Set<string>(
+	PRODUCT_ANALYTICS_DASHBOARD_PAGE_NAMES,
+);
 
 export function isDashboardPageName(
 	pageName: AppPageName | null,
@@ -77,10 +56,10 @@ function getConfig() {
 	return { key, host };
 }
 
-function getEnvironment(): AnalyticsEnvironment {
+function getEnvironment(): ProductAnalyticsEnvironment {
 	const configuredEnvironment = (
 		import.meta.env.VITE_POSTHOG_ENVIRONMENT ?? ""
-	).trim() as AnalyticsEnvironment | "";
+	).trim() as ProductAnalyticsEnvironment | "";
 	if (
 		configuredEnvironment === "production" ||
 		configuredEnvironment === "staging" ||
@@ -122,33 +101,79 @@ function buildPayload(payload: Record<string, unknown>) {
 	};
 }
 
-export function initProductAnalytics() {
-	if (initialized || typeof window === "undefined") {
-		return;
+function flushPendingActions(client: PostHogClient) {
+	const actions = pendingActions.splice(0);
+	for (const action of actions) {
+		try {
+			action(client);
+		} catch {
+			// Analytics must never break the UI.
+		}
+	}
+}
+
+async function loadPostHogClient(): Promise<PostHogClient | null> {
+	if (posthogClient) {
+		return posthogClient;
+	}
+
+	if (typeof window === "undefined") {
+		return null;
 	}
 
 	const config = getConfig();
 	if (!config) {
-		initialized = true;
+		return null;
+	}
+
+	if (!posthogClientPromise) {
+		posthogClientPromise = import("posthog-js")
+			.then(({ default: client }) => {
+				client.init(config.key, {
+					api_host: config.host,
+					autocapture: false,
+					capture_pageview: "history_change",
+					capture_pageleave: "if_capture_pageview",
+					disable_session_recording: true,
+					disable_surveys: true,
+					debug: isDebugModeEnabled(),
+					defaults: "2026-01-30",
+				});
+				client.register({
+					event_version: EVENT_VERSION,
+					surface: ANALYTICS_SURFACE,
+					environment: getEnvironment(),
+				});
+				posthogClient = client;
+				flushPendingActions(client);
+				return client;
+			})
+			.catch(() => {
+				pendingActions.length = 0;
+				posthogClientPromise = null;
+				return null;
+			});
+	}
+
+	return posthogClientPromise;
+}
+
+function withPostHogClient(action: (client: PostHogClient) => void) {
+	if (!getConfig()) {
 		return;
 	}
 
-	posthog.init(config.key, {
-		api_host: config.host,
-		autocapture: false,
-		capture_pageview: "history_change",
-		capture_pageleave: "if_capture_pageview",
-		disable_session_recording: true,
-		disable_surveys: true,
-		debug: isDebugModeEnabled(),
-		defaults: "2026-01-30",
-	});
-	posthog.register({
-		event_version: EVENT_VERSION,
-		surface: ANALYTICS_SURFACE,
-		environment: getEnvironment(),
-	});
-	initialized = true;
+	if (posthogClient) {
+		action(posthogClient);
+		return;
+	}
+
+	pendingActions.push(action);
+	void loadPostHogClient();
+}
+
+export function initProductAnalytics() {
+	void loadPostHogClient();
 }
 
 export function identifyProductAnalyticsUser(
@@ -158,23 +183,18 @@ export function identifyProductAnalyticsUser(
 		name?: string | null;
 	},
 ) {
-	if (!initialized) {
-		initProductAnalytics();
-	}
-	if (!getConfig()) {
-		return;
-	}
-	posthog.identify(userId, {
-		email: properties?.email,
-		name: properties?.name ?? undefined,
+	withPostHogClient((client) => {
+		client.identify(userId, {
+			email: properties?.email,
+			name: properties?.name ?? undefined,
+		});
 	});
 }
 
 export function resetProductAnalytics() {
-	if (!initialized || !getConfig()) {
-		return;
-	}
-	posthog.reset();
+	withPostHogClient((client) => {
+		client.reset();
+	});
 }
 
 export function normalizeWebErrorCode(error: unknown) {
@@ -248,87 +268,76 @@ export function getHttpStatusFromError(error: unknown) {
 	return undefined;
 }
 
-function captureEvent(event: string, payload: Record<string, unknown>) {
-	if (!initialized) {
-		initProductAnalytics();
-	}
-	if (!getConfig()) {
-		return;
-	}
-
-	try {
-		posthog.capture(event, buildPayload(payload));
-	} catch {
-		// Analytics must never break the UI.
-	}
+function captureEvent(
+	event: ProductAnalyticsEventName,
+	payload: Record<string, unknown>,
+) {
+	withPostHogClient((client) => {
+		client.capture(event, buildPayload(payload));
+	});
 }
 
-export function captureSignUpFailed(payload: {
-	signup_method: "email_password" | "google" | "github";
-	failure_stage: "form_submit" | "provider_redirect";
-	error_code: string;
-	is_invite_flow?: boolean;
-	entry_point?:
-		| "homepage"
-		| "cli_device_login"
-		| "accept_invitation"
-		| "direct";
-}) {
-	captureEvent("Sign Up Failed", payload);
+export function captureSignUpFailed(
+	payload: WebCapturePayload<SignUpFailedEvent>,
+) {
+	captureEvent(PRODUCT_ANALYTICS_EVENTS.SIGN_UP_FAILED, payload);
 }
 
 export function captureDashboardViewed(
-	payload: {
-		organization_id: string;
-		user_id: string;
-		page_name: DashboardPageName;
-		has_data: boolean;
-		date_range_days: number;
-		insight_count: number;
-	} & Record<string, AnalyticsPropertyValue>,
+	payload: WebCapturePayload<DashboardViewedEvent>,
 ) {
-	captureEvent("Dashboard Viewed", payload);
+	captureEvent(PRODUCT_ANALYTICS_EVENTS.DASHBOARD_VIEWED, payload);
 }
 
-export function captureDashboardLoadFailed(payload: {
-	organization_id: string;
-	user_id: string;
-	page_name: DashboardPageName;
-	query_name: string;
-	error_code: string;
-	date_range_days: number;
-	is_blocking: true;
-	http_status?: number;
-}) {
-	captureEvent("Dashboard Load Failed", payload);
+export function captureDashboardLoadFailed(
+	payload: WebCapturePayload<DashboardLoadFailedEvent>,
+) {
+	captureEvent(PRODUCT_ANALYTICS_EVENTS.DASHBOARD_LOAD_FAILED, payload);
 }
 
-export function captureInsightCardClicked(payload: {
-	organization_id: string;
-	user_id: string;
-	page_name: "overview";
-	insight_key: string;
-	insight_type: "trend" | "performer" | "alert" | "info";
-	insight_severity: "positive" | "warning" | "negative" | "info";
-	destination_path: string;
-	position_index: number;
-	date_range_days: number;
-}) {
-	captureEvent("Insight Card Clicked", payload);
+export function captureDashboardNavigationClicked(
+	payload: WebCapturePayload<DashboardNavigationClickedEvent>,
+) {
+	captureEvent(PRODUCT_ANALYTICS_EVENTS.DASHBOARD_NAVIGATION_CLICKED, payload);
 }
 
-export function captureUiControlUsed(payload: {
-	page_name: AppPageName;
-	control_name: string;
-	control_type: UiControlType;
-	interaction_type: UiInteractionType;
-	organization_id?: string;
-	user_id?: string;
-	date_range_days?: number;
-	target_path?: string;
-	value?: boolean | number | string;
-}) {
-	captureEvent("UI Control Used", payload);
+export function captureDashboardFilterChanged(
+	payload: WebCapturePayload<DashboardFilterChangedEvent>,
+) {
+	captureEvent(PRODUCT_ANALYTICS_EVENTS.DASHBOARD_FILTER_CHANGED, payload);
+}
+
+export function captureDashboardDrilldownOpened(
+	payload: WebCapturePayload<DashboardDrilldownOpenedEvent>,
+) {
+	captureEvent(PRODUCT_ANALYTICS_EVENTS.DASHBOARD_DRILLDOWN_OPENED, payload);
+}
+
+export function captureChartExportTriggered(
+	payload: WebCapturePayload<ChartExportTriggeredEvent>,
+) {
+	captureEvent(PRODUCT_ANALYTICS_EVENTS.CHART_EXPORT_TRIGGERED, payload);
+}
+
+export function captureOrganizationActionTriggered(
+	payload: WebCapturePayload<OrganizationActionTriggeredEvent>,
+) {
+	captureEvent(PRODUCT_ANALYTICS_EVENTS.ORGANIZATION_ACTION_TRIGGERED, payload);
+}
+
+export function captureAuthenticationActionTriggered(
+	payload: WebCapturePayload<AuthenticationActionTriggeredEvent>,
+) {
+	captureEvent(
+		PRODUCT_ANALYTICS_EVENTS.AUTHENTICATION_ACTION_TRIGGERED,
+		payload,
+	);
+}
+
+export function captureUiUtilityUsed(
+	payload: WebCapturePayload<UiUtilityUsedEvent>,
+) {
+	captureEvent(PRODUCT_ANALYTICS_EVENTS.UI_UTILITY_USED, payload);
 }
 
 const ANALYTICS_PAGE_MATCHERS: ReadonlyArray<{

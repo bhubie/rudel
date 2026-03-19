@@ -8,7 +8,22 @@ import { initProductAnalytics } from "./lib/product-analytics";
 import { queryClient } from "./lib/query-client";
 import { ThemeProvider } from "./providers/ThemeProvider";
 
-initProductAnalytics();
+function deferProductAnalyticsInit() {
+	if (typeof window === "undefined") {
+		return;
+	}
+
+	if ("requestIdleCallback" in window) {
+		window.requestIdleCallback(() => {
+			initProductAnalytics();
+		});
+		return;
+	}
+
+	setTimeout(() => {
+		initProductAnalytics();
+	}, 0);
+}
 
 // biome-ignore lint/style/noNonNullAssertion: root element always exists
 createRoot(document.getElementById("root")!).render(
@@ -22,3 +37,5 @@ createRoot(document.getElementById("root")!).render(
 		</QueryClientProvider>
 	</StrictMode>,
 );
+
+deferProductAnalyticsInit();
