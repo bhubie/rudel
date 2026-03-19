@@ -27,6 +27,11 @@ import { Switch } from "@/components/ui/switch";
 import { useDateRange } from "@/contexts/DateRangeContext";
 import { useAnalyticsQuery } from "@/hooks/useAnalyticsQuery";
 import { useCanViewSession } from "@/hooks/useCanViewSession";
+import { useUiControlTracking } from "@/hooks/useDashboardAnalytics";
+import {
+	type DashboardSection,
+	useTrackDashboardView,
+} from "@/hooks/useTrackDashboardView";
 import { useUserMap } from "@/hooks/useUserMap";
 import { calculateCost, formatUsername } from "@/lib/format";
 import { orpc } from "@/lib/orpc";
@@ -36,6 +41,7 @@ export function SessionsListPage() {
 	const { startDate, endDate, setStartDate, setEndDate, calculateDays } =
 		useDateRange();
 	const days = calculateDays();
+	const { trackUiControl } = useUiControlTracking();
 
 	const [selectedRepositories, setSelectedRepositories] = useState<string[]>(
 		[],
@@ -68,17 +74,29 @@ export function SessionsListPage() {
 		return () => clearTimeout(timer);
 	}, [selectedDimension, selectedMetric, selectedSplitBy]);
 
-	const { data: summary } = useAnalyticsQuery(
+	const {
+		data: summary,
+		isLoading: summaryLoading,
+		isError: summaryError,
+	} = useAnalyticsQuery(
 		orpc.analytics.sessions.summary.queryOptions({ input: { days } }),
 	);
 
-	const { data: comparison } = useAnalyticsQuery(
+	const {
+		data: comparison,
+		isLoading: comparisonLoading,
+		isError: comparisonError,
+	} = useAnalyticsQuery(
 		orpc.analytics.sessions.summaryComparison.queryOptions({
 			input: { days },
 		}),
 	);
 
-	const { data: sessions, isLoading } = useAnalyticsQuery(
+	const {
+		data: sessions,
+		isLoading: sessionsLoading,
+		isError: sessionsError,
+	} = useAnalyticsQuery(
 		orpc.analytics.sessions.list.queryOptions({
 			input: { days, limit: 100, sortBy: "session_date", sortOrder: "desc" },
 		}),
@@ -87,18 +105,21 @@ export function SessionsListPage() {
 	const { userMap } = useUserMap();
 	const canViewSession = useCanViewSession();
 
-	const { data: dimensionData, isLoading: dimensionLoading } =
-		useAnalyticsQuery(
-			orpc.analytics.sessions.dimensionAnalysis.queryOptions({
-				input: {
-					days,
-					dimension: debouncedDimension,
-					metric: debouncedMetric,
-					splitBy: debouncedSplitBy || undefined,
-					limit: 10,
-				},
-			}),
-		);
+	const {
+		data: dimensionData,
+		isLoading: dimensionLoading,
+		isError: dimensionError,
+	} = useAnalyticsQuery(
+		orpc.analytics.sessions.dimensionAnalysis.queryOptions({
+			input: {
+				days,
+				dimension: debouncedDimension,
+				metric: debouncedMetric,
+				splitBy: debouncedSplitBy || undefined,
+				limit: 10,
+			},
+		}),
+	);
 
 	const columns = useMemo<ColumnDef<SessionAnalytics>[]>(
 		() => [
@@ -232,7 +253,59 @@ export function SessionsListPage() {
 		}));
 	}, [userMap]);
 
-	if (isLoading) {
+	const sessionsIsLoading =
+		summaryLoading || comparisonLoading || sessionsLoading || dimensionLoading;
+	const sessionsSections: DashboardSection[] = [
+		{
+			id: "summary_cards",
+			state:
+				summaryError || comparisonError
+					? "error"
+					: summary && comparison
+						? "populated"
+						: "empty",
+			itemCount: summary && comparison ? 3 : 0,
+		},
+		{
+			id: "dimension_analysis",
+			state: dimensionError
+				? "error"
+				: (dimensionData?.length ?? 0) > 0
+					? "populated"
+					: "empty",
+			itemCount: dimensionData?.length ?? 0,
+		},
+		{
+			id: "sessions_table",
+			state: sessionsError
+				? "error"
+				: filteredSessions.length > 0
+					? "populated"
+					: "empty",
+			itemCount: filteredSessions.length,
+		},
+	];
+	const sessionsMetrics = [
+		{ id: "total_sessions", value: summary?.total_sessions },
+		{
+			id: "avg_session_duration_min",
+			value: summary?.avg_session_duration_min,
+		},
+		{
+			id: "avg_response_time_sec",
+			value: summary?.avg_response_time_sec,
+		},
+	];
+
+	useTrackDashboardView({
+		isLoading: sessionsIsLoading,
+		isError: sessionsError,
+		hasData: (sessions?.length ?? 0) > 0,
+		sections: sessionsSections,
+		metrics: sessionsMetrics,
+	});
+
+	if (sessionsIsLoading) {
 		return (
 			<div className="px-8 py-6">
 				<PageHeader
@@ -311,9 +384,15 @@ export function SessionsListPage() {
 						</label>
 						<Select
 							value={selectedMetric}
-							onValueChange={(v) =>
-								setSelectedMetric(v as DimensionAnalysisInput["metric"])
-							}
+							onValueChange={(v) => {
+								trackUiControl({
+									controlName: "sessions_metric",
+									controlType: "select",
+									interactionType: "change",
+									value: v,
+								});
+								setSelectedMetric(v as DimensionAnalysisInput["metric"]);
+							}}
 						>
 							<SelectTrigger className="w-full">
 								<SelectValue />
@@ -342,9 +421,15 @@ export function SessionsListPage() {
 						</label>
 						<Select
 							value={selectedDimension}
-							onValueChange={(v) =>
-								setSelectedDimension(v as DimensionAnalysisInput["dimension"])
-							}
+							onValueChange={(v) => {
+								trackUiControl({
+									controlName: "sessions_dimension",
+									controlType: "select",
+									interactionType: "change",
+									value: v,
+								});
+								setSelectedDimension(v as DimensionAnalysisInput["dimension"]);
+							}}
 						>
 							<SelectTrigger className="w-full">
 								<SelectValue />
@@ -369,6 +454,12 @@ export function SessionsListPage() {
 						<Select
 							value={selectedSplitBy || "none"}
 							onValueChange={(v) => {
+								trackUiControl({
+									controlName: "sessions_split_by",
+									controlType: "select",
+									interactionType: "change",
+									value: v,
+								});
 								const value = v === "none" ? "" : v;
 								setSelectedSplitBy(
 									value as DimensionAnalysisInput["dimension"] | "",
@@ -395,7 +486,15 @@ export function SessionsListPage() {
 						<span className="text-sm text-muted">Scale to 100%</span>
 						<Switch
 							checked={showPercentage}
-							onCheckedChange={setShowPercentage}
+							onCheckedChange={(checked) => {
+								trackUiControl({
+									controlName: "sessions_scale_to_100",
+									controlType: "toggle",
+									interactionType: "change",
+									value: checked,
+								});
+								setShowPercentage(checked);
+							}}
 						/>
 					</div>
 				)}
@@ -454,7 +553,9 @@ export function SessionsListPage() {
 				<DataTable
 					columns={columns}
 					data={filteredSessions}
+					analyticsId="sessions_list"
 					defaultSorting={[{ id: "date", desc: true }]}
+					getRowAnalyticsValue={(row) => row.session_id}
 					onRowClick={(row) =>
 						navigate(`/dashboard/sessions/${row.session_id}`)
 					}

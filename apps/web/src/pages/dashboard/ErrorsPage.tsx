@@ -8,6 +8,10 @@ import { StatCard } from "@/components/analytics/StatCard";
 import { ErrorTrendChart } from "@/components/charts/ErrorTrendChart";
 import { useDateRange } from "@/contexts/DateRangeContext";
 import { useAnalyticsQuery } from "@/hooks/useAnalyticsQuery";
+import {
+	type DashboardSection,
+	useTrackDashboardView,
+} from "@/hooks/useTrackDashboardView";
 import { useUserMap } from "@/hooks/useUserMap";
 import { orpc } from "@/lib/orpc";
 
@@ -36,13 +40,21 @@ export function ErrorsPage() {
 		"project_path" | "user_id" | "model"
 	>("project_path");
 
-	const { data: errors, isLoading } = useAnalyticsQuery(
+	const {
+		data: errors,
+		isLoading: errorsLoading,
+		isError: errorsError,
+	} = useAnalyticsQuery(
 		orpc.analytics.errors.topRecurring.queryOptions({
 			input: { days, minOccurrences: 2, limit: 15 },
 		}),
 	);
 
-	const { data: trendData, isLoading: trendLoading } = useAnalyticsQuery(
+	const {
+		data: trendData,
+		isLoading: trendLoading,
+		isError: trendError,
+	} = useAnalyticsQuery(
 		orpc.analytics.errors.trends.queryOptions({
 			input: { startDate, endDate, splitBy: trendSplitBy },
 		}),
@@ -59,8 +71,56 @@ export function ErrorsPage() {
 			: 0;
 	const mostCommonError =
 		errors && errors.length > 0 ? errors[0].error_pattern : "None";
+	const errorsIsLoading = errorsLoading || trendLoading;
+	const errorsSections: DashboardSection[] = [
+		{
+			id: "summary_cards",
+			state: errorsError ? "error" : "populated",
+			itemCount: errorsError ? 0 : 4,
+		},
+		{
+			id: "error_trends",
+			state: trendError
+				? "error"
+				: (trendData?.length ?? 0) > 0
+					? "populated"
+					: "empty",
+			itemCount: trendData?.length ?? 0,
+		},
+		{
+			id: "top_recurring_errors",
+			state: errorsError
+				? "error"
+				: (errors?.length ?? 0) > 0
+					? "populated"
+					: "empty",
+			itemCount: errors?.length ?? 0,
+		},
+		{
+			id: "error_insights",
+			state: errorsError
+				? "error"
+				: (errors?.length ?? 0) > 0
+					? "populated"
+					: "empty",
+			itemCount: (errors?.length ?? 0) > 0 ? 2 : 0,
+		},
+	];
+	const errorsMetrics = [
+		{ id: "total_errors", value: totalErrors },
+		{ id: "high_severity_count", value: highSeverityCount },
+		{ id: "affected_users_total", value: affectedUsersTotal },
+	];
 
-	if (isLoading) {
+	useTrackDashboardView({
+		isLoading: errorsIsLoading,
+		isError: errorsError,
+		hasData: (errors?.length ?? 0) > 0,
+		sections: errorsSections,
+		metrics: errorsMetrics,
+	});
+
+	if (errorsIsLoading) {
 		return (
 			<div className="px-8 py-6">
 				<PageHeader
