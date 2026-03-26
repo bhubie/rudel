@@ -176,6 +176,8 @@ export function Sidebar() {
 		ADMIN_ORGANIZATION_ID !== "" &&
 		organizations.some((org) => org.id === ADMIN_ORGANIZATION_ID);
 
+	console.log(isAdmin, ADMIN_ORGANIZATION_ID, organizations)
+
 	const logoSrc =
 		resolvedTheme === "dark" ? "/logo-light.svg" : "/logo-dark.svg";
 
